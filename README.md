@@ -1,0 +1,4 @@
+- Implemented a parallel N-body (50000) gravitational simulator using CUDA to model particle interactions under Newtonian gravity.
+- Designed GPU kernels for force computation and position updates.
+- Achieved ~290× speedup over CPU implementation through massive thread-level parallelism and using shared memory.
+- Visualized particle evolution by generating frame-by-frame simulation images.
