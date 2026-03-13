@@ -1,4 +1,2 @@
-- Implemented a parallel N-body (50000) gravitational simulator using CUDA to model particle interactions under Newtonian gravity.
-- Designed GPU kernels for force computation and position updates.
-- Achieved ~290× speedup over CPU implementation through massive thread-level parallelism and using shared memory.
-- Visualized particle evolution by generating frame-by-frame simulation images.
+- Implemented a CUDA-accelerated Barnes–Hut N-Body simulation supporting 50K particles using quadtree spatial decomposition and hierarchical force approximation (O(N log N)), achieving ~302x speedup over a CPU O(N²) implementation.
+- Developed a CUDA shared-memory tiled N-Body simulator handling 50K particles, reducing global memory accesses and significantly accelerating O(N²) force computation compared to CPU execution. ~290x speedup.
