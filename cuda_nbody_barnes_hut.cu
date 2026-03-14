@@ -28,100 +28,148 @@ struct Bodies{
     float *mass;
 };
 
+#define MAX_NODES (N*4)
+
+
 ////////////////////////////////////////////////////////////
 // Barnes-Hut Tree Node
 ////////////////////////////////////////////////////////////
 
-struct QuadNode{
-    float cx,cy;
-    float half;
+struct QuadTree{
+    float *cx;
+    float *cy;
+    float *half;
 
-    float mass;
-    float com_x,com_y;
+    float *mass;
+    float *com_x;
+    float *com_y;
 
-    int body;
+    int *body;
 
-    int children[4];
-    bool leaf;
+    int *child0;
+    int *child1;
+    int *child2;
+    int *child3;
+
+    bool *leaf;
 };
 
 ////////////////////////////////////////////////////////////
 // Insert Body Into Tree
 ////////////////////////////////////////////////////////////
 
-void insert_body(std::vector<QuadNode>& nodes,
-                 Bodies bodies,
-                 int nodeIndex,
-                 int bodyIndex)
+void insert_body(
+    QuadTree &tree,
+    Bodies &bodies,
+    int node,
+    int bodyIndex,
+    int &nodeCount)
 {
-    // Empty leaf
-    if(nodes[nodeIndex].leaf && nodes[nodeIndex].body == -1)
+    float x = bodies.x[bodyIndex];
+    float y = bodies.y[bodyIndex];
+
+    // If node is empty leaf
+    if(tree.leaf[node] && tree.body[node] == -1)
     {
-        nodes[nodeIndex].body = bodyIndex;
+        tree.body[node] = bodyIndex;
         return;
     }
 
-    // Leaf already contains a body → split
-    if(nodes[nodeIndex].leaf)
+    if(tree.half[node] < MIN_CELL_SIZE)
     {
-        // Prevent infinite subdivision
-        if(nodes[nodeIndex].half < MIN_CELL_SIZE)
-        {
-            // Just accumulate mass without further splitting
-            return;
-        }
-        int oldBody = nodes[nodeIndex].body;
-
-        float cx = nodes[nodeIndex].cx;
-        float cy = nodes[nodeIndex].cy;
-        float half = nodes[nodeIndex].half;
-
-        nodes[nodeIndex].body = -1;
-        nodes[nodeIndex].leaf = false;
-
-        // Create children
-        for(int i=0;i<4;i++)
-        {
-            QuadNode child;
-
-            child.half = half / 2.0f;
-
-            child.cx = cx + ((i % 2) ? child.half : -child.half);
-            child.cy = cy + ((i / 2) ? child.half : -child.half);
-
-            child.mass = 0;
-            child.com_x = 0;
-            child.com_y = 0;
-            child.body = -1;
-            child.leaf = true;
-
-            for(int j=0;j<4;j++) child.children[j] = -1;
-
-            nodes.push_back(child);
-
-            nodes[nodeIndex].children[i] = nodes.size() - 1;
-        }
-
-        // Reinsert old body
-        int oldQuad =
-            (bodies.x[oldBody] > cx) +
-            2 * (bodies.y[oldBody] > cy);
-
-        insert_body(nodes,
-                    bodies,
-                    nodes[nodeIndex].children[oldQuad],
-                    oldBody);
+        tree.body[node] = bodyIndex;
+        return;
     }
 
-    // Insert new body
-    int quad =
-        (bodies.x[bodyIndex] > nodes[nodeIndex].cx) +
-        2 * (bodies.y[bodyIndex] > nodes[nodeIndex].cy);
+    // If node is leaf but already contains a body
+    if(tree.leaf[node])
+    {
+        int oldBody = tree.body[node];
+        tree.body[node] = -1;
+        tree.leaf[node] = 0;
 
-    insert_body(nodes,
-                bodies,
-                nodes[nodeIndex].children[quad],
-                bodyIndex);
+        float cx = tree.cx[node];
+        float cy = tree.cy[node];
+        float half = tree.half[node] * 0.5f;
+
+        if(nodeCount + 4 >= MAX_NODES)
+        {
+            std::cerr << "Tree overflow\n";
+            return;
+        }
+
+        // Create children
+        tree.child0[node] = nodeCount++;
+        tree.child1[node] = nodeCount++;
+        tree.child2[node] = nodeCount++;
+        tree.child3[node] = nodeCount++;
+
+        int c0 = tree.child0[node];
+        int c1 = tree.child1[node];
+        int c2 = tree.child2[node];
+        int c3 = tree.child3[node];
+
+        // Initialize children
+        tree.cx[c0] = cx - half;
+        tree.cy[c0] = cy - half;
+        tree.half[c0] = half;
+
+        tree.cx[c1] = cx + half;
+        tree.cy[c1] = cy - half;
+        tree.half[c1] = half;
+
+        tree.cx[c2] = cx - half;
+        tree.cy[c2] = cy + half;
+        tree.half[c2] = half;
+
+        tree.cx[c3] = cx + half;
+        tree.cy[c3] = cy + half;
+        tree.half[c3] = half;
+
+        for(int c : {c0,c1,c2,c3})
+        {
+            tree.leaf[c] = 1;
+            tree.body[c] = -1;
+            tree.child0[c] = tree.child1[c] = tree.child2[c] = tree.child3[c] = -1;
+        }
+
+        // determine quadrant of old body
+        float ox = bodies.x[oldBody];
+        float oy = bodies.y[oldBody];
+
+        int oldQuadrant = 0;
+        if(ox > cx) oldQuadrant += 1;
+        if(oy > cy) oldQuadrant += 2;
+
+        int oldChild;
+
+        if(oldQuadrant == 0) oldChild = tree.child0[node];
+        else if(oldQuadrant == 1) oldChild = tree.child1[node];
+        else if(oldQuadrant == 2) oldChild = tree.child2[node];
+        else oldChild = tree.child3[node];
+
+        // insert old body into child
+        insert_body(tree, bodies, oldChild, oldBody, nodeCount);
+    }
+
+    // Determine quadrant
+    float cx = tree.cx[node];
+    float cy = tree.cy[node];
+
+    int quadrant = 0;
+
+    if(x > cx) quadrant += 1;
+    if(y > cy) quadrant += 2;
+
+    int child;
+
+    if(quadrant == 0) child = tree.child0[node];
+    else if(quadrant == 1) child = tree.child1[node];
+    else if(quadrant == 2) child = tree.child2[node];
+    else child = tree.child3[node];
+
+    // Recurse
+    insert_body(tree, bodies, child, bodyIndex, nodeCount);
 }
 
 
@@ -129,47 +177,60 @@ void insert_body(std::vector<QuadNode>& nodes,
 // Compute Center of Mass
 ////////////////////////////////////////////////////////////
 
-void compute_mass(std::vector<QuadNode>& nodes,
-                  Bodies bodies,
-                  int nodeIndex)
+void compute_mass(QuadTree &tree, Bodies &bodies, int node)
 {
-    QuadNode &node=nodes[nodeIndex];
-
-    if(node.leaf)
+    // If this is a leaf node
+    if(tree.leaf[node])
     {
-        if(node.body!=-1)
+        int b = tree.body[node];
+
+        if(b != -1)
         {
-            node.mass = bodies.mass[node.body];
-            node.com_x = bodies.x[node.body];
-            node.com_y = bodies.y[node.body];
+            tree.mass[node]  = bodies.mass[b];
+            tree.com_x[node] = bodies.x[b];
+            tree.com_y[node] = bodies.y[b];
         }
+        else
+        {
+            tree.mass[node] = 0.0f;
+        }
+
         return;
     }
 
-    float mass=0;
-    float cx=0;
-    float cy=0;
+    // Otherwise compute from children
+    float mass = 0.0f;
+    float com_x = 0.0f;
+    float com_y = 0.0f;
 
-    for(int i=0;i<4;i++)
+    int children[4] = {
+        tree.child0[node],
+        tree.child1[node],
+        tree.child2[node],
+        tree.child3[node]
+    };
+
+    for(int i = 0; i < 4; i++)
     {
-        int child=node.children[i];
-        if(child==-1) continue;
+        int c = children[i];
 
-        compute_mass(nodes,bodies,child);
+        if(c == -1) continue;
 
-        QuadNode &c=nodes[child];
+        compute_mass(tree, bodies, c);
 
-        mass+=c.mass;
-        cx+=c.com_x*c.mass;
-        cy+=c.com_y*c.mass;
+        float m = tree.mass[c];
+
+        mass += m;
+        com_x += tree.com_x[c] * m;
+        com_y += tree.com_y[c] * m;
     }
 
-    node.mass=mass;
+    tree.mass[node] = mass;
 
-    if(mass>0)
+    if(mass > 0.0f)
     {
-        node.com_x=cx/mass;
-        node.com_y=cy/mass;
+        tree.com_x[node] = com_x / mass;
+        tree.com_y[node] = com_y / mass;
     }
 }
 
@@ -177,65 +238,64 @@ void compute_mass(std::vector<QuadNode>& nodes,
 // GPU Barnes-Hut Force Kernel
 ////////////////////////////////////////////////////////////
 
-__global__ void compute_forces_bh(
-        Bodies bodies,
-        QuadNode *nodes)
+__global__ void compute_forces_bh(Bodies bodies, QuadTree tree)
 {
-    int i=blockIdx.x*blockDim.x+threadIdx.x;
-    if(i>=N) return;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if(i >= N) return;
 
     float my_x = bodies.x[i];
     float my_y = bodies.y[i];
-    float my_vx = bodies.vx[i];
-    float my_vy = bodies.vy[i];
     float my_mass = bodies.mass[i];
 
-    float fx=0;
-    float fy=0;
+    float fx = 0.0f;
+    float fy = 0.0f;
 
     int stack[64];
-    int top=0;
+    int top = 0;
 
-    stack[top++]=0;
+    stack[top++] = 0;
 
-    while(top>0)
+    while(top > 0)
     {
-        int nodeIndex=stack[--top];
-        QuadNode node=nodes[nodeIndex];
+        int nodeIndex = stack[--top];
 
-        float dx = node.com_x - my_x;
-        float dy = node.com_y - my_y;
+        float dx = tree.com_x[nodeIndex] - my_x;
+        float dy = tree.com_y[nodeIndex] - my_y;
 
         float dist2 = dx*dx + dy*dy + SOFTENING*SOFTENING;
-        float half2 = node.half * node.half;
 
-        if(node.leaf || half2/dist2 < THETA*THETA)
+        float half = tree.half[nodeIndex];
+        float half2 = half * half;
+
+        if(tree.leaf[nodeIndex] || half2 < THETA*THETA * dist2)
         {
-            if(node.body == i) continue;
+            if(tree.body[nodeIndex] == i) continue;
 
-            float dist = sqrtf(dist2);
+            float invDist = rsqrtf(dist2);
 
-            float force = G * my_mass * node.mass / dist2;
+            float force =
+                G * my_mass * tree.mass[nodeIndex] *
+                invDist * invDist;
 
-            fx += force * dx / dist;
-            fy += force * dy / dist;
+            fx += force * dx * invDist;
+            fy += force * dy * invDist;
         }
         else
         {
-            for(int k=0;k<4;k++)
-            {
-                int child=node.children[k];
-                if(child!=-1)
-                    stack[top++]=child;
-            }
+            int c0 = tree.child0[nodeIndex];
+            int c1 = tree.child1[nodeIndex];
+            int c2 = tree.child2[nodeIndex];
+            int c3 = tree.child3[nodeIndex];
+
+            if(c0 != -1) stack[top++] = c0;
+            if(c1 != -1) stack[top++] = c1;
+            if(c2 != -1) stack[top++] = c2;
+            if(c3 != -1) stack[top++] = c3;
         }
     }
 
-    my_vx+=DT*fx/my_mass;
-    my_vy+=DT*fy/my_mass;
-
-    bodies.vx[i]=my_vx;
-    bodies.vy[i]=my_vy;
+    bodies.vx[i] += DT * fx / my_mass;
+    bodies.vy[i] += DT * fy / my_mass;
 }
 
 ////////////////////////////////////////////////////////////
@@ -412,62 +472,119 @@ int main()
 
     cudaEventRecord(start);
 
-    std::vector<QuadNode> nodes;
-    nodes.reserve(4*N);
+    //std::vector<QuadNode> nodes;
+    //nodes.reserve(4*N);
 
-    QuadNode *d_nodes;
+    //QuadNode *d_nodes;
 
-    cudaMalloc(&d_nodes,
-        4*N*sizeof(QuadNode));
+    QuadTree tree;
+    int nodeCount;
+
+    tree.cx = (float*)malloc(MAX_NODES*sizeof(float));
+    tree.cy = (float*)malloc(MAX_NODES*sizeof(float));
+    tree.half = (float*)malloc(MAX_NODES*sizeof(float));
+
+    tree.mass = (float*)malloc(MAX_NODES*sizeof(float));
+    tree.com_x = (float*)malloc(MAX_NODES*sizeof(float));
+    tree.com_y = (float*)malloc(MAX_NODES*sizeof(float));
+
+    tree.body = (int*)malloc(MAX_NODES*sizeof(int));
+
+    tree.child0 = (int*)malloc(MAX_NODES*sizeof(int));
+    tree.child1 = (int*)malloc(MAX_NODES*sizeof(int));
+    tree.child2 = (int*)malloc(MAX_NODES*sizeof(int));
+    tree.child3 = (int*)malloc(MAX_NODES*sizeof(int));
+
+    tree.leaf = (bool*)malloc(MAX_NODES*sizeof(bool));
+
+    QuadTree d_tree;
+
+    cudaMalloc(&d_tree.cx, MAX_NODES*sizeof(float));
+    cudaMalloc(&d_tree.cy, MAX_NODES*sizeof(float));
+    cudaMalloc(&d_tree.half, MAX_NODES*sizeof(float));
+
+    cudaMalloc(&d_tree.mass, MAX_NODES*sizeof(float));
+    cudaMalloc(&d_tree.com_x, MAX_NODES*sizeof(float));
+    cudaMalloc(&d_tree.com_y, MAX_NODES*sizeof(float));
+
+    cudaMalloc(&d_tree.body, MAX_NODES*sizeof(int));
+
+    cudaMalloc(&d_tree.child0, MAX_NODES*sizeof(int));
+    cudaMalloc(&d_tree.child1, MAX_NODES*sizeof(int));
+    cudaMalloc(&d_tree.child2, MAX_NODES*sizeof(int));
+    cudaMalloc(&d_tree.child3, MAX_NODES*sizeof(int));
+
+    cudaMalloc(&d_tree.leaf, MAX_NODES*sizeof(bool));
 
     for(int step=0;step<STEPS;step++)
     {
-        QuadNode root;
+        //QuadNode root;
 
-        root.cx=0.5f;
-        root.cy=0.5f;
-        root.half=0.5f;
+        tree.cx[0]=0.5f;
+        tree.cy[0]=0.5f;
+        tree.half[0]=0.5f;
 
-        root.mass=0;
-        root.com_x=0;
-        root.com_y=0;
+        tree.mass[0]=0;
+        tree.com_x[0]=0;
+        tree.com_y[0]=0;
 
-        root.body=-1;
-        root.leaf=true;
+        tree.body[0]=-1;
+        tree.leaf[0]=true;
 
-        for(int i=0;i<4;i++) root.children[i]=-1;
+        tree.child0[0]=-1;
+        tree.child1[0]=-1;
+        tree.child2[0]=-1;
+        tree.child3[0]=-1;
 
         
-        nodes.push_back(root);
+        //nodes.push_back(root);
+        nodeCount = 1;
         
         for(int i=0;i<N;i++){
             //std::cout << "Reaching here " << i << std::endl;
-            insert_body(nodes,gpu_bodies,0,i);
+            insert_body(tree, gpu_bodies,0,i, nodeCount);
             //std::cout << "Tree nodes: " << nodes.size() << std::endl;
         }
 
         
-        
-        compute_mass(nodes,gpu_bodies,0);
+        compute_mass(tree,gpu_bodies,0);
 
-        cudaMemcpy(d_nodes,
-                   nodes.data(),
-                   nodes.size()*sizeof(QuadNode),
-                   cudaMemcpyHostToDevice);
+        //cudaMemcpy(d_nodes,
+        //           nodes.data(),
+        //           nodes.size()*sizeof(QuadNode),
+        //           cudaMemcpyHostToDevice);
+        
+        cudaMemcpy(d_tree.cx, tree.cx, nodeCount*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_tree.cy, tree.cy, nodeCount*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_tree.half, tree.half, nodeCount*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_tree.mass, tree.mass, nodeCount*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_tree.com_x, tree.com_x, nodeCount*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_tree.com_y, tree.com_y, nodeCount*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_tree.body, tree.body, nodeCount*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_tree.child0, tree.child0, nodeCount*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_tree.child1, tree.child1, nodeCount*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_tree.child2, tree.child2, nodeCount*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_tree.child3, tree.child3, nodeCount*sizeof(int), cudaMemcpyHostToDevice);
+        
+        cudaMemcpy(d_tree.leaf, tree.leaf, nodeCount*sizeof(bool), cudaMemcpyHostToDevice);
+        
+        
         compute_forces_bh<<<blocks,threads>>>(
-                gpu_bodies,d_nodes);
+                gpu_bodies,d_tree);
 
         update_positions<<<blocks,threads>>>(gpu_bodies);
 
         cudaDeviceSynchronize();
 
+        //std::cout << gpu_bodies.x[0] << " " << gpu_bodies.y[0] << std::endl;
+
         
         //save_frame(gpu_bodies,step);
 
-        nodes.clear();
+        //nodes.clear();
     }
 
-    cudaFree(d_nodes);
+    //cudaFree(d_nodes);
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
