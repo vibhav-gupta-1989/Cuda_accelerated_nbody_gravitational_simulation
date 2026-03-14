@@ -203,20 +203,22 @@ __global__ void compute_forces_bh(
         int nodeIndex=stack[--top];
         QuadNode node=nodes[nodeIndex];
 
-        float dx=node.com_x-my_x;
-        float dy=node.com_y-my_y;
+        float dx = node.com_x - my_x;
+        float dy = node.com_y - my_y;
 
-        float dist=sqrtf(dx*dx+dy*dy+SOFTENING*SOFTENING);
+        float dist2 = dx*dx + dy*dy + SOFTENING*SOFTENING;
+        float half2 = node.half * node.half;
 
-        if(node.leaf || node.half/dist<THETA)
+        if(node.leaf || half2/dist2 < THETA*THETA)
         {
             if(node.body == i) continue;
 
-            float force=
-                G*my_mass*node.mass/(dist*dist);
+            float dist = sqrtf(dist2);
 
-            fx+=force*dx/dist;
-            fy+=force*dy/dist;
+            float force = G * my_mass * node.mass / dist2;
+
+            fx += force * dx / dist;
+            fy += force * dy / dist;
         }
         else
         {
