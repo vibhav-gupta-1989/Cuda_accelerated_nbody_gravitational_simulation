@@ -392,6 +392,11 @@ int main()
     std::vector<QuadNode> nodes;
     nodes.reserve(4*N);
 
+    QuadNode *d_nodes;
+
+    cudaMalloc(&d_nodes,
+        4*N*sizeof(QuadNode));
+
     for(int step=0;step<STEPS;step++)
     {
         QuadNode root;
@@ -422,11 +427,6 @@ int main()
         
         compute_mass(nodes,gpu_bodies,0);
 
-        QuadNode *d_nodes;
-
-        cudaMalloc(&d_nodes,
-                   nodes.size()*sizeof(QuadNode));
-
         cudaMemcpy(d_nodes,
                    nodes.data(),
                    nodes.size()*sizeof(QuadNode),
@@ -441,10 +441,10 @@ int main()
         
         //save_frame(gpu_bodies,step);
 
-        cudaFree(d_nodes);
-
         nodes.clear();
     }
+
+    cudaFree(d_nodes);
 
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
