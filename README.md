@@ -1,2 +1,2 @@
-- Implemented a CUDA-accelerated Barnes–Hut N-Body simulation supporting 50K particles using quadtree spatial decomposition and hierarchical force approximation (O(N log N)), achieving ~335x speedup over a CPU O(N²) implementation.
+- Implemented a CUDA-accelerated Barnes–Hut N-Body simulation supporting 50K particles using quadtree spatial decomposition and hierarchical force approximation (O(N log N)), achieving ~430x speedup over a CPU O(N²) implementation.
 - Developed a CUDA shared-memory tiled N-Body simulator handling 50K particles, reducing global memory accesses and significantly accelerating O(N²) force computation compared to CPU execution. ~290x speedup.
