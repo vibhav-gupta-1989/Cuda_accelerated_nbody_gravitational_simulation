@@ -18,10 +18,14 @@
 
 #define BLOCK 256
 
-struct Body{
-    float x,y;
-    float vx,vy;
-    float mass;
+struct Bodies{
+    float *x;
+    float *y;
+
+    float *vx;
+    float *vy;
+
+    float *mass;
 };
 
 ////////////////////////////////////////////////////////////
@@ -46,7 +50,7 @@ struct QuadNode{
 ////////////////////////////////////////////////////////////
 
 void insert_body(std::vector<QuadNode>& nodes,
-                 Body* bodies,
+                 Bodies bodies,
                  int nodeIndex,
                  int bodyIndex)
 {
@@ -100,8 +104,8 @@ void insert_body(std::vector<QuadNode>& nodes,
 
         // Reinsert old body
         int oldQuad =
-            (bodies[oldBody].x > cx) +
-            2 * (bodies[oldBody].y > cy);
+            (bodies.x[oldBody] > cx) +
+            2 * (bodies.y[oldBody] > cy);
 
         insert_body(nodes,
                     bodies,
@@ -111,8 +115,8 @@ void insert_body(std::vector<QuadNode>& nodes,
 
     // Insert new body
     int quad =
-        (bodies[bodyIndex].x > nodes[nodeIndex].cx) +
-        2 * (bodies[bodyIndex].y > nodes[nodeIndex].cy);
+        (bodies.x[bodyIndex] > nodes[nodeIndex].cx) +
+        2 * (bodies.y[bodyIndex] > nodes[nodeIndex].cy);
 
     insert_body(nodes,
                 bodies,
@@ -126,7 +130,7 @@ void insert_body(std::vector<QuadNode>& nodes,
 ////////////////////////////////////////////////////////////
 
 void compute_mass(std::vector<QuadNode>& nodes,
-                  Body* bodies,
+                  Bodies bodies,
                   int nodeIndex)
 {
     QuadNode &node=nodes[nodeIndex];
@@ -135,11 +139,9 @@ void compute_mass(std::vector<QuadNode>& nodes,
     {
         if(node.body!=-1)
         {
-            Body &b=bodies[node.body];
-
-            node.mass=b.mass;
-            node.com_x=b.x;
-            node.com_y=b.y;
+            node.mass = bodies.mass[node.body];
+            node.com_x = bodies.x[node.body];
+            node.com_y = bodies.y[node.body];
         }
         return;
     }
@@ -176,13 +178,17 @@ void compute_mass(std::vector<QuadNode>& nodes,
 ////////////////////////////////////////////////////////////
 
 __global__ void compute_forces_bh(
-        Body *bodies,
+        Bodies bodies,
         QuadNode *nodes)
 {
     int i=blockIdx.x*blockDim.x+threadIdx.x;
     if(i>=N) return;
 
-    Body my=bodies[i];
+    float my_x = bodies.x[i];
+    float my_y = bodies.y[i];
+    float my_vx = bodies.vx[i];
+    float my_vy = bodies.vy[i];
+    float my_mass = bodies.mass[i];
 
     float fx=0;
     float fy=0;
@@ -197,8 +203,8 @@ __global__ void compute_forces_bh(
         int nodeIndex=stack[--top];
         QuadNode node=nodes[nodeIndex];
 
-        float dx=node.com_x-my.x;
-        float dy=node.com_y-my.y;
+        float dx=node.com_x-my_x;
+        float dy=node.com_y-my_y;
 
         float dist=sqrtf(dx*dx+dy*dy+SOFTENING*SOFTENING);
 
@@ -207,7 +213,7 @@ __global__ void compute_forces_bh(
             if(node.body == i) continue;
 
             float force=
-                G*my.mass*node.mass/(dist*dist);
+                G*my_mass*node.mass/(dist*dist);
 
             fx+=force*dx/dist;
             fy+=force*dy/dist;
@@ -223,30 +229,31 @@ __global__ void compute_forces_bh(
         }
     }
 
-    my.vx+=DT*fx/my.mass;
-    my.vy+=DT*fy/my.mass;
+    my_vx+=DT*fx/my_mass;
+    my_vy+=DT*fy/my_mass;
 
-    bodies[i]=my;
+    bodies.vx[i]=my_vx;
+    bodies.vy[i]=my_vy;
 }
 
 ////////////////////////////////////////////////////////////
 // Update Positions
 ////////////////////////////////////////////////////////////
 
-__global__ void update_positions(Body *bodies)
+__global__ void update_positions(Bodies bodies)
 {
     int i=blockIdx.x*blockDim.x+threadIdx.x;
     if(i>=N) return;
 
-    bodies[i].x+=bodies[i].vx*DT;
-    bodies[i].y+=bodies[i].vy*DT;
+    bodies.x[i]+=bodies.vx[i]*DT;
+    bodies.y[i]+=bodies.vy[i]*DT;
 
-    if(bodies[i].x < 0 || bodies[i].x > 1){
-        bodies[i].vx *= -1.0;
+    if(bodies.x[i] < 0 || bodies.x[i] > 1){
+        bodies.vx[i] *= -1.0;
     }
 
-    if(bodies[i].y < 0 || bodies[i].y > 1){
-        bodies[i].vy *= -1.0;
+    if(bodies.y[i] < 0 || bodies.y[i] > 1){
+        bodies.vy[i] *= -1.0;
     }
 }
 
@@ -254,14 +261,14 @@ __global__ void update_positions(Body *bodies)
 // Save Frame
 ////////////////////////////////////////////////////////////
 
-void save_frame(Body *bodies,int frame)
+void save_frame(Bodies bodies,int frame)
 {
     std::vector<int> image(WIDTH*HEIGHT*3,0);
 
     for(int i=0;i<N;i++)
     {
-        int x=bodies[i].x*WIDTH;
-        int y=bodies[i].y*HEIGHT;
+        int x=bodies.x[i]*WIDTH;
+        int y=bodies.y[i]*HEIGHT;
 
         if(x>=0 && x<WIDTH && y>=0 && y<HEIGHT)
         {
@@ -296,7 +303,7 @@ void save_frame(Body *bodies,int frame)
 // CPU Simulation (baseline O(N^2))
 ////////////////////////////////////////////////////////////
 
-void cpu_simulate(Body *bodies)
+void cpu_simulate(Bodies bodies)
 {
     for(int step=0;step<STEPS;step++)
     {
@@ -308,33 +315,33 @@ void cpu_simulate(Body *bodies)
             {
                 if(i == j) continue;
 
-                float dx=bodies[j].x-bodies[i].x;
-                float dy=bodies[j].y-bodies[i].y;
+                float dx=bodies.x[j]-bodies.x[i];
+                float dy=bodies.y[j]-bodies.y[i];
 
                 float dist=sqrt(dx*dx+dy*dy+SOFTENING*SOFTENING);
 
                 float force=
-                    G*bodies[i].mass*bodies[j].mass/(dist*dist);
+                    G*bodies.mass[i]*bodies.mass[j]/(dist*dist);
 
                 fx+=force*dx/dist;
                 fy+=force*dy/dist;
             }
 
-            bodies[i].vx+=DT*fx/bodies[i].mass;
-            bodies[i].vy+=DT*fy/bodies[i].mass;
+            bodies.vx[i]+=DT*fx/bodies.mass[i];
+            bodies.vy[i]+=DT*fy/bodies.mass[i];
         }
 
         for(int i=0;i<N;i++)
         {
-            bodies[i].x+=bodies[i].vx*DT;
-            bodies[i].y+=bodies[i].vy*DT;
+            bodies.x[i]+=bodies.vx[i]*DT;
+            bodies.y[i]+=bodies.vy[i]*DT;
 
-            if(bodies[i].x < 0 || bodies[i].x > 1){
-                bodies[i].vx *= -1.0;
+            if(bodies.x[i] < 0 || bodies.x[i] > 1){
+                bodies.vx[i] *= -1.0;
             }
 
-            if(bodies[i].y < 0 || bodies[i].y > 1){
-                bodies[i].vy *= -1.0;
+            if(bodies.y[i] < 0 || bodies.y[i] > 1){
+                bodies.vy[i] *= -1.0;
             }
         }
     }
@@ -346,21 +353,35 @@ void cpu_simulate(Body *bodies)
 
 int main()
 {
-    Body *cpu_bodies=new Body[N];
-    Body *gpu_bodies;
+    Bodies cpu_bodies;
+    Bodies gpu_bodies;
 
-    cudaMallocManaged(&gpu_bodies,N*sizeof(Body));
+    cpu_bodies.x = new float[N];
+    cpu_bodies.y = new float[N];
+    cpu_bodies.vx = new float[N];
+    cpu_bodies.vy = new float[N];
+    cpu_bodies.mass = new float[N];
+
+    cudaMallocManaged(&gpu_bodies.x, N*sizeof(float));
+    cudaMallocManaged(&gpu_bodies.y, N*sizeof(float));
+    cudaMallocManaged(&gpu_bodies.vx, N*sizeof(float));
+    cudaMallocManaged(&gpu_bodies.vy, N*sizeof(float));
+    cudaMallocManaged(&gpu_bodies.mass, N*sizeof(float));
 
     for(int i=0;i<N;i++)
     {
-        cpu_bodies[i].x=rand()/float(RAND_MAX);
-        cpu_bodies[i].y=rand()/float(RAND_MAX);
+        cpu_bodies.x[i] = rand()/float(RAND_MAX);
+        cpu_bodies.y[i] = rand()/float(RAND_MAX);
 
-        cpu_bodies[i].vx=0;
-        cpu_bodies[i].vy=0;
-        cpu_bodies[i].mass=1;
+        cpu_bodies.vx[i] = 0;
+        cpu_bodies.vy[i] = 0;
+        cpu_bodies.mass[i] = 1;
 
-        gpu_bodies[i]=cpu_bodies[i];
+        gpu_bodies.x[i] = cpu_bodies.x[i];
+        gpu_bodies.y[i] = cpu_bodies.y[i];
+        gpu_bodies.vx[i] = cpu_bodies.vx[i];
+        gpu_bodies.vy[i] = cpu_bodies.vy[i];
+        gpu_bodies.mass[i] = cpu_bodies.mass[i];
     }
 
     ////////////////////////////////////////////////////////////
@@ -462,6 +483,15 @@ int main()
     std::cout<<"GPU Time: "<<gpu_time<<" seconds\n";
     std::cout<<"Speedup: "<<cpu_time/gpu_time<<"x\n";
 
-    cudaFree(gpu_bodies);
-    delete[] cpu_bodies;
+    cudaFree(gpu_bodies.x);
+    cudaFree(gpu_bodies.y);
+    cudaFree(gpu_bodies.vx);
+    cudaFree(gpu_bodies.vy);
+    cudaFree(gpu_bodies.mass);
+    
+    delete[] cpu_bodies.x;
+    delete[] cpu_bodies.y;
+    delete[] cpu_bodies.vx;
+    delete[] cpu_bodies.vy;
+    delete[] cpu_bodies.mass;
 }
