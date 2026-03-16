@@ -19,7 +19,7 @@
 #define WIDTH 800
 #define HEIGHT 800
 
-#define DT 0.01f
+#define DT 0.001f
 #define G 0.0001f
 #define SOFTENING 1e-6f
 #define THETA 0.5f
@@ -302,7 +302,10 @@ int *d_indices)
         bodies,d_nodes);
 
     update<<<blocks,BLOCK>>>(bodies);
+}
 
+void cudaGraphicsWork(){
+    int blocks=(N+BLOCK-1)/BLOCK;
     cudaGraphicsMapResources(1,&cuda_vbo_resource);
 
     float2 *dptr;
@@ -406,13 +409,6 @@ int main()
 
     srand(time(NULL));
 
-    std::ofstream file("output.txt");
-
-    if(!file){
-        std::cout << "Error opening file" << std::endl;
-        return 1;
-    }
-
     for(int i=0;i<N;i++)
     {
         hx[i]=rand()/float(RAND_MAX);
@@ -460,9 +456,11 @@ int main()
 
     createVBO();
 
-    start = std::chrono::high_resolution_clock::now();
+    double ms = 0;
 
     for(int i=0; i<STEPS; i++){
+        
+        start = std::chrono::high_resolution_clock::now();
 
         stepSimulation(
             d_nodes,
@@ -470,16 +468,17 @@ int main()
             d_indices);
         
         cudaDeviceSynchronize();
+
+        end = std::chrono::high_resolution_clock::now();
+        
+        ms += std::chrono::duration<double,std::milli>(end-start).count();
+        
+        cudaGraphicsWork();
+        
+        cudaDeviceSynchronize();
     }
-
-    end = std::chrono::high_resolution_clock::now();
-
-    double ms =
-            std::chrono::duration<double,std::milli>(end-start).count();
-
-    //std::cout << "GPU step time: " << ms << " ms\n";
-
-    double speedup = (cpu_ms / STEPS) / (ms / STEPS);
+    
+    double speedup = cpu_ms / ms;
     std::cout << speedup << std::endl;
 
     while(!glfwWindowShouldClose(window))
@@ -489,6 +488,8 @@ int main()
             d_morton,
             d_indices);
         
+        cudaGraphicsWork();
+
         render();
 
         glfwSwapBuffers(window);
